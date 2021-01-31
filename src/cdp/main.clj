@@ -179,22 +179,50 @@
    containing statement/label pairs which properly classify some data value."
   [statements labels]
   (let [pairs (map vector statements labels)]
-    (vec (filter #(not (empty? %))
-                 (map (fn [index data-label]
-                        (into #{} (filter (fn [[statement label]]
-                                            (and (= (count statement) 1)
-                                                 (== (first statement) data-label)
-                                                 (== index (:index label))))
-                                          pairs)))
-                      (range)
-                      data-labels)))))
+    (into {}
+          (filter #(not (empty? (second %)))
+                  (map (fn [index data-label]
+                         [index
+                          (into #{} (filter (fn [[statement label]]
+                                              (and (= (count statement) 1)
+                                                   (== index (:index label))
+                                                   (== (first statement) data-label)))
+                                            pairs))])
+                       (range)
+                       data-labels)))))
+
+(defn conflict-counter
+  "A goal counter for the iris problem. Returns a list of up to 150 sets
+   containing statement/label pairs which properly classify some data value."
+  [statements labels]
+  (let [pairs (map vector statements labels)]
+    (into {}
+          (filter #(not (empty? (second %)))
+                  (map (fn [index data-label]
+                         [index
+                          (into #{} (filter (fn [[statement label]]
+                                              (and (= (count statement) 1)
+                                                   (== index (:index label))
+                                                   (#{0 1 2 0.0 1.0 2.0} (first statement))
+                                                   (not (== (first statement) data-label))))
+                                            pairs))])
+                       (range)
+                       data-labels)))))
+
+(defn conflict-predicate
+  "Conflict predicate for the iris problem. Returns true when a statement/label
+   pair properly classifies some data value."
+  [statement label]
+  (and (= (count statement) 1)
+       (#{0 1 2 0.0 1.0 2.0} (first statement))
+       (not (== (first statement) (nth data-labels (:index label))))))
 
 (defn evaluate
   "A function that is executed after each evolutionary step. Computes and
    prints the current 'score' of the state, where the 'score' is defined
    as the number of data values such that there is at least one
    statement/label pair that correctly classifies it, and no statement/label
-   pairs that incorrectly classify it." 
+   pairs that incorrectly classify it."
   [execution-state]
   (let [statements (:statements execution-state)
         labels (:labels execution-state)
@@ -216,14 +244,6 @@
                        (range (count data-labels)))
         result-count (count result)]
     (println (str "Score: " result-count))))
-
-(defn conflict-predicate
-  "Conflict predicate for the iris problem. Returns true when a statement/label
-   pair properly classifies some data value."
-  [statement label]
-  (and (= (count statement) 1)
-       (#{0 1 2 0.0 1.0 2.0} (first statement))
-       (not (== (first statement) (nth data-labels (:index label))))))
 
 (defn label-predicate
   "Label predicate for the iris problem. Returns true if and only if the 'life'
@@ -274,7 +294,7 @@
    respectively, that the evolutionary process will keep after each step.
    Setting these caps can help the evolutionary process run faster by preveting
    it from accumulating too many unnecessary rules."
-  [steps & [data-points statement-cap rule-cap]]
+  [steps & [data-points rule-cap statement-cap output-interval]]
   (let [result (evo/evolve (invariant-statements data-points)
                            (invariant-labels data-points)
                            env
@@ -282,14 +302,14 @@
                            label-predicate
                            label-generator
                            goal-counter
-                           conflict-predicate
+                           conflict-counter
                            steps
-                           (or statement-cap ##Inf)
                            (or rule-cap ##Inf)
+                           (or statement-cap ##Inf)
                            3
                            0.25
                            0.5
                            evaluate
-                           true)]
+                           (or output-interval 25))]
     (println (str "\nFinal evaluation:"))
     (evaluate result)))

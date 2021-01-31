@@ -130,110 +130,149 @@
                               (:rules execution-state)))
         without-nth (fn [v n]
                       (into (subvec v 0 n) (subvec v (inc n))))]
-    (remove-orphan-statements (assoc execution-state
-                                     :rules (without-nth (:rules execution-state) rule-index)
-                                     :progress (without-nth (:progress execution-state) rule-index)
-                                     :records (mapv (fn [record-set]
-                                                      (into #{} (remove #(= (:rule %) rule)
-                                                                        record-set)))
-                                                    (:records execution-state)))
-                              invariant-statements
-                              invariant-labels)))
+    (if rule-index
+      (remove-orphan-statements (assoc execution-state
+                                       :rules (without-nth (:rules execution-state) rule-index)
+                                       :progress (without-nth (:progress execution-state) rule-index)
+                                       :records (mapv (fn [record-set]
+                                                        (into #{} (remove #(= (:rule %) rule)
+                                                                          record-set)))
+                                                      (:records execution-state)))
+                                invariant-statements
+                                invariant-labels)
+      execution-state)))
 
-(defn find-goal-generators
-  "Given an execution state, a goal counter, a list of invariant statements,
-   and a list of corresponding invariant labels, returns a list of sets of
-   generators responsible for accomplish each goal that the execution state
-   currently accomplishes."
-  [execution-state goal-counter invariant-statements invariant-labels]
-  (mapv (fn [goal-set]
-          (apply set/union
-                 (map (fn [[statement label]]
-                        (statement-generators execution-state
-                                              statement
-                                              label
-                                              invariant-statements
-                                              invariant-labels))
-                      goal-set)))
-        (goal-counter (:statements execution-state) (:labels execution-state))))
+(defn find-generators
+  "Given an execution state, a counter (either a goal counter or a conflict
+   counter), a list of invariant statements, and a list of corresponding
+   invariant labels, returns a list of sets of generators responsible for
+   each set that the counter identifies."
+  [execution-state counter invariant-statements invariant-labels]
+  (into {}
+        (mapv (fn [[index goal-set]]
+                [index
+                 (apply set/union
+                        (map (fn [[statement label]]
+                               (statement-generators execution-state
+                                                     statement
+                                                     label
+                                                     invariant-statements
+                                                     invariant-labels))
+                             goal-set))])
+              (counter (:statements execution-state) (:labels execution-state)))))
 
 (defn may-remove?
-  "Given a vector of sets goal generators and a set `removal` of rules to
-   potentially be removed, determines whether or not the rules can be removed
-   without causing any of goals to become unfulfilled."
-  [goal-generators-vector removal]
-  (reduce (fn [value goal-generators]
+  "Given a map of sets of goal generators, a map of sets of conflict
+   generators, and a set `removal` of rules to potentially be removed,
+   determines whether or not the rules can be removed without causing any of
+   goals to become unfulfilled."
+  [goal-generators-map conflict-generators-map removal]
+  (reduce (fn [value [goal-index goal-generators]]
             (and value
-                 (some (fn [goal-generator]
-                         (empty? (set/intersection goal-generator
-                                                   removal)))
-                       goal-generators)))
+                 (let [conflict-generators (or (conflict-generators-map goal-index)
+                                               #{})
+                       non-implicated-goal-generators (doall (remove (fn [goal-generator]
+                                                                       (some (fn [conflict-generator]
+                                                                               (set/subset? conflict-generator
+                                                                                            goal-generator))
+                                                                             conflict-generators))
+                                                                     goal-generators))]
+                   (or (empty? non-implicated-goal-generators)
+                       (some (fn [goal-generator]
+                               (empty? (set/intersection goal-generator
+                                                         removal)))
+                             non-implicated-goal-generators)))))
           true
-          goal-generators-vector))
+          goal-generators-map))
 
 (defn resolve-conflicts
-  "Given an execution state, a goal counter, a conflict predicate, a list of
+  "Given an execution state, a goal counter, a conflict counter, a list of
    invariant statements and a list of corresponding invariant labels, attempts
-   to resolve all conflicts indicated by the conflict predicate by removing
+   to resolve all conflicts indicated by the conflict counter by removing
    the rules that generate the conflicts. If resolving some conflict would
    require removing a set of rules that would lead to some goal becoming
    unfulfilled, then the conflict will not be resolved."
-  [execution-state goal-counter conflict-predicate invariant-statements invariant-labels]
-  (loop [current-state execution-state
-         index 0
-         unsolvable-conflicts #{}
-         goal-generators-vector (find-goal-generators execution-state
-                                                      goal-counter
-                                                      invariant-statements
-                                                      invariant-labels)]
-    (if (>= index (count (:statements current-state)))
-      [current-state unsolvable-conflicts]
-      (let [statement (nth (:statements current-state) index)
-            label (nth (:labels current-state) index)
-            pair [statement label]]
-        (if (and (not (unsolvable-conflicts pair))
-                 (conflict-predicate statement label))
-          (let [conflict-generators (statement-generators current-state
-                                                          statement
-                                                          label
-                                                          invariant-statements
-                                                          invariant-labels)
-                minimal-conflict-generators (remove (fn [generator]
-                                                      (some (fn [other-generator]
-                                                              (and (not= generator other-generator)
-                                                                   (set/superset? generator other-generator)))
-                                                            conflict-generators))
-                                                    conflict-generators)
-                conflict-solutions (into #{} (map #(into #{} %)
-                                                  (combinations minimal-conflict-generators)))
-                acceptable-solution (some (fn [solution]
-                                            (when (may-remove? goal-generators-vector
-                                                               solution)
-                                              solution))
-                                          (shuffle conflict-solutions))]
-            (if acceptable-solution
-              (let [new-state (reduce (fn [state rule]
-                                        (remove-rule state
-                                                     invariant-statements
-                                                     invariant-labels
-                                                     rule))
-                                      current-state
-                                      acceptable-solution)]
-                (recur new-state
-                       0
-                       unsolvable-conflicts
-                       (find-goal-generators new-state
+  [execution-state goal-counter conflict-counter invariant-statements invariant-labels]
+  (let [goal-generators-map (find-generators execution-state
                                              goal-counter
                                              invariant-statements
-                                             invariant-labels)))
-              (recur current-state
-                     (inc index)
-                     (conj unsolvable-conflicts pair)
-                     goal-generators-vector)))
-          (recur current-state
-                 (inc index)
-                 unsolvable-conflicts
-                 goal-generators-vector))))))
+                                             invariant-labels)
+        conflict-generators-map (find-generators execution-state
+                                                 conflict-counter
+                                                 invariant-statements
+                                                 invariant-labels)]
+    (first
+     (reduce (fn [[state goal-generators-map] [conflict-index conflict-generators]]
+               (let [minimal-conflict-generators (remove (fn [generator]
+                                                           (some (fn [other-generator]
+                                                                   (and (not= generator other-generator)
+                                                                        (set/superset? generator other-generator)))
+                                                                 conflict-generators))
+                                                         conflict-generators)
+                     conflict-generator-combinations (into #{} (map #(into #{} %)
+                                                                    (combinations minimal-conflict-generators)))
+                     solution (some (fn [potential-solution]
+                                      (when (may-remove? goal-generators-map
+                                                         conflict-generators-map
+                                                         potential-solution)
+                                        potential-solution))
+                                    conflict-generator-combinations)]
+                 (if solution
+                   (let [reduced-state (reduce (fn [state rule]
+                                                 (remove-rule state
+                                                              invariant-statements
+                                                              invariant-labels
+                                                              rule))
+                                               state
+                                               solution)]
+                     [reduced-state
+                      (find-generators reduced-state
+                                       goal-counter
+                                       invariant-statements
+                                       invariant-labels)])
+                   [state
+                    goal-generators-map])))
+             [execution-state goal-generators-map]
+             conflict-generators-map))))
+
+(def seen-rules (atom []))
+
+(defn show-rules [goal-generators conflict-generators]
+  (let [get-rule-index
+        (fn [rule]
+          (let [seen-index (some (fn [[seen-rule index]]
+                                   (when (= rule seen-rule)
+                                     index))
+                                 (map vector
+                                      @seen-rules
+                                      (range)))]
+            (if seen-index
+              seen-index
+              (do (swap! seen-rules
+                         #(conj % rule))
+                  (dec (count @seen-rules))))))]
+    (println "Goal generators:")
+    (prn (into {}
+               (mapv (fn [[key value]]
+                       [key
+                        (into #{}
+                              (mapv (fn [generator-set]
+                                      (into #{}
+                                            (mapv get-rule-index
+                                                  generator-set)))
+                                    value))])
+                     goal-generators)))
+    (println "Conflict generators:")
+    (prn (into {}
+               (mapv (fn [[key value]]
+                       [key
+                        (into #{}
+                              (mapv (fn [generator-set]
+                                      (into #{}
+                                            (mapv get-rule-index
+                                                  generator-set)))
+                                    value))])
+                     conflict-generators)))))
 
 (defn execute
   "Given an execution state, an environment, a label predicate, and a label
@@ -249,6 +288,9 @@
    derived. Depending on the nature of the label predicate and generator,
    this may lead to an infinite loop."
   [execution-state env label-predicate label-generator & [max-steps]]
+  (swap! seen-rules
+         (fn [x]
+           []))
   (loop [steps (or max-steps ##Inf)
          state execution-state]
     (if (<= steps 0)
@@ -306,10 +348,10 @@
 (defn evolve
   "Given a list of invariant statement, a list of corresponding invariant
    labels, an environment, a distribution, a label predicate, a label
-   generator function, a goal counter, a conflict predicate, and a number of
+   generator function, a goal counter, a conflict counter, and a number of
    steps, attempts to evolve a set of rules that generate statement/label pairs
    that statisfy the goals without causing any conflicts, as measured by the
-   goal counter and conflict predicate. It will do so by randomly generating
+   goal counter and conflict counter. It will do so by randomly generating
    rules using `dist, such that each rule consists of a program tree built form
    the operations in `env`. The first rules will be created randomly, and after
    that new rules are created by varying existing rules using point mutation
@@ -340,19 +382,14 @@
    label, to the statement used to derive the new statement.
    
    `goal-counter` should be a function that takes in a list of statements
-   and a list of corresponding labels, and returns a list of sets. Each
-   set in the list should contain one or more statement/label pairs that
-   satisfy a ceratin goal. For a classification problem, each set should
-   indicate that a particualr value is properly classified by the
-   statement/label pair within the set.
+   and a list of corresponding labels, and returns a map. The map should map
+   from integers, representing indeces for individual training values, to
+   sets of statement/label pairs that correctly classify the training value.
    
-   `conflict-predicate` should be a function that takes in a statement and
-   a corresponding label, and should return a boolean describing whether or not
-   that statement/label pair is considered a conflict. When this predicate
-   returns true for a statement/label pair, the mind will attempt to discard
-   the pair by removing the rules that lead to it's creation. For a
-   classification problem, this should return true when the statement/label
-   pair incorrectly classifies some data value.
+   `conflict-counter` should be a function that takes in a list of statements
+   and a list of corresponding labels, and returns a map. The map should map
+   from integers, representing indeces for individual training values, to
+   sets of statement/label pairs that incorrectly classify the training value.
    
    The evolution takes place over a number of steps, as specified by the
    `steps` input. On each step, a new rule will be generated, and the function
@@ -391,15 +428,14 @@
    with the current state as an input. This can be used to print custom
    output at each step, or keep track of the state at each step, etc.
    
-   When the `verbose` flag, which defaults to false, is set to true, the
-   function will print out information about the current state after each
-   step of execution."
-  [invariant-statements invariant-labels env dist label-predicate label-generator goal-counter conflict-predicate steps & [statement-cap rule-cap max-depth new-prob crossover-prob evaluator verbose]]
+   `print-status-delay` is the number of steps to delay before printing out
+   each status update. If this number is 0 or less, no updates will be printed."
+  [invariant-statements invariant-labels env dist label-predicate label-generator goal-counter conflict-counter steps & [rule-cap statement-cap max-depth new-prob crossover-prob evaluator print-status-delay]]
   (let [max-depth (or max-depth 4)
         new-prob (or new-prob 0.05)
-        crossover-prob (or crossover-prob 0.7)]
-    (when verbose
-      (println (str "Starting evolution:")))
+        crossover-prob (or crossover-prob 0.7)
+        print-status-delay (or print-status-delay 0)]
+    (println (str "Starting evolution:"))
     (loop [current-step 0
            state {:rules []
                   :statements (vec invariant-statements)
@@ -428,21 +464,26 @@
                                         label-predicate
                                         label-generator
                                         ##Inf)
-              [resolved-state unresolvable] (resolve-conflicts progressed-state
-                                                               goal-counter
-                                                               conflict-predicate
-                                                               invariant-statements
-                                                               invariant-labels)
+              resolved-state (resolve-conflicts progressed-state
+                                                goal-counter
+                                                conflict-counter
+                                                invariant-statements
+                                                invariant-labels)
               final-state (loop [current-state resolved-state]
-                            (if (and (< (count (:rules current-state)) rule-cap)
-                                     (< (count (:statements current-state)) statement-cap))
+                            (if (and (<= (count (:rules current-state)) rule-cap)
+                                     (<= (count (:statements current-state)) statement-cap))
                               current-state
-                              (let [goal-generators (find-goal-generators current-state
-                                                                          goal-counter
-                                                                          invariant-statements
-                                                                          invariant-labels)
+                              (let [goal-generators-map (find-generators current-state
+                                                                         goal-counter
+                                                                         invariant-statements
+                                                                         invariant-labels)
+                                    conflict-generators-map (find-generators current-state
+                                                                             conflict-counter
+                                                                             invariant-statements
+                                                                             invariant-labels)
                                     removable-rule (some (fn [rule]
-                                                           (when (may-remove? goal-generators
+                                                           (when (may-remove? goal-generators-map
+                                                                              conflict-generators-map
                                                                               #{rule})
                                                              rule))
                                                          (:rules current-state))]
@@ -452,40 +493,39 @@
                                                       invariant-labels
                                                       removable-rule))
                                   current-state))))
-              goal-generators (find-goal-generators resolved-state
-                                                    goal-counter
-                                                    invariant-statements
-                                                    invariant-labels)
+              goal-generators (find-generators final-state
+                                               goal-counter
+                                               invariant-statements
+                                               invariant-labels)
               contributing-rules (vec (apply set/union
-                                      (map (partial apply set/union)
-                                           goal-generators)))]
-          (when verbose
-              (println (str "\nStep "
-                            (inc current-step)
-                            ":   Rules - "
-                            (count (:rules final-state))
-                            " ("
-                            (count (vec (apply set/union
-                                               (map (partial apply set/union)
-                                                    (find-goal-generators final-state
-                                                                          goal-counter
-                                                                          invariant-statements
-                                                                          invariant-labels)))))
-                            "), Statements - "
-                            (count (:statements final-state))
-                            " ("
-                            (count unresolvable)
-                            "), Goals achieved - "
-                            (count goal-generators))))
-          (when evaluator (evaluator final-state))
+                                             (apply set/union
+                                                    (vals goal-generators))))]
+          (when (and (> print-status-delay 0)
+                     (= (mod current-step print-status-delay) 0))
+            (println (str "\nStep "
+                          (inc current-step)
+                          ":   Rules - "
+                          (count (:rules final-state))
+                          " ("
+                          (count contributing-rules)
+                          "), Statements - "
+                          (count (:statements final-state))
+                          " ("
+                          (count (conflict-counter (:statements final-state)
+                                                   (:labels final-state)))
+                          "), Goals achieved - "
+                          (count goal-generators)))
+
+            (when evaluator (evaluator final-state)))
           (recur (inc current-step)
                  final-state
                  contributing-rules))
         (do
-          (when verbose
-            (println "evolution completed with "
+          (when (and (> print-status-delay 0)
+                     (= (mod current-step print-status-delay) 0))
+            (println "evolution completed with"
                      (count (:rules state))
-                     " rules and "
+                     "rules and"
                      (count (:statements state))
                      "statements"))
           state)))))

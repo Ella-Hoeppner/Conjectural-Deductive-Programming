@@ -3,18 +3,18 @@
             [cdp.language :as lang]))
 
 ; An "executation state" (also referred to simply as a "state") is a map
-; containing the keys :rules, :statements, :labels, :progress, and :records.
+; containing the keys :rules, :statements, :tags, :progress, and :records.
 ; :rules should map to a vector of program trees, while :statements should map
 ; to a vector of statements (the form of the statements can be anything, it
-; just depends on the nature of the problem being solved), and :labels maps to
-; a vector of labels with the same length as the :statements vector. :progress
+; just depends on the nature of the problem being solved), and :tags maps to
+; a vector of tags with the same length as the :statements vector. :progress
 ; should map to a vector of integers the same size as the :rules vector. Each
 ; integer in :progress is interpreted as an index describing how many
 ; statements in :statements the corresponding rule has already been applied to.
 ; A value of n at index i in :progress denotes that the ith rule has already
 ; been applied to the first i statements in :statements. :records should be a
 ; vector the same length as :statements, where each element is a set containing
-; 0 or more maps, each of which have the keys :rule, :statement, and :label.
+; 0 or more maps, each of which have the keys :rule, :statement, and :tag.
 ; The set at index i in :records denotes that the statement at index i in
 ; :statements can be derived from each triple in the set.
 
@@ -39,78 +39,78 @@
                           (first l)))))))
 
 (defn statement-generators
-  "Given an execution state, a statement/label pair within that state, and two
-   lists of the invariant statements and corresponding invariant labels,
+  "Given an execution state, a statement/tag pair within that state, and two
+   lists of the invariant statements and corresponding invariant tags,
    returns a set of all sets of rules within the execution state that would
-   cause the statement/label pair to be generated from the invariant
-   statements/labels. A set of rules that can generate a particular statement/
-   label pair is referred to as a 'generator' of that pair." 
-  [execution-state statement label invariant-statements invariant-labels]
+   cause the statement/tag pair to be generated from the invariant
+   statements/tags. A set of rules that can generate a particular statement/
+   tag pair is referred to as a 'generator' of that pair." 
+  [execution-state statement tag invariant-statements invariant-tags]
   (let [statements (:statements execution-state)
-        labels (:labels execution-state)
+        tags (:tags execution-state)
         records (:records execution-state)]
-    ((fn f [[statement label] ignorable-pairs]
+    ((fn f [[statement tag] ignorable-pairs]
        (let [records (some (fn [index]
                              (when (and (= (nth statements index) statement)
-                                        (= (nth labels index) label))
+                                        (= (nth tags index) tag))
                                (nth records index)))
                            (range (count statements)))]
          (apply set/union
                 (map (fn [record]
                        (let [record-rule (:rule record)
                              record-statement (:statement record)
-                             record-label (:label record)
-                             record-pair [record-statement record-label]]
+                             record-tag (:tag record)
+                             record-pair [record-statement record-tag]]
                          (if (ignorable-pairs record-pair)
                            #{#{record-rule}}
                            (into #{} (map #(conj % record-rule)
                                           (f record-pair (conj ignorable-pairs record-pair)))))))
                      records))))
-     [statement label]
+     [statement tag]
      (into #{} (map vector
                     invariant-statements
-                    invariant-labels)))))
+                    invariant-tags)))))
 
 (defn remove-statement
-  "Given an execution state and an index, removes the statement, label, and
+  "Given an execution state and an index, removes the statement, tag, and
    record at that index. Also updates the progress field to reflect the
    removal of the statement, and removes any records which reference the
    removed statement."
   [execution-state index]
   (let [statements (:statements execution-state)
         statement (nth statements index)
-        labels (:labels execution-state)
-        label (nth labels index)
+        tags (:tags execution-state)
+        tag (nth tags index)
         without-nth (fn [v n]
                       (into (subvec v 0 n) (subvec v (inc n))))]
     (assoc execution-state
            :statements (without-nth statements index)
-           :labels (without-nth labels index)
+           :tags (without-nth tags index)
            :progress (mapv #(if (>= % index) (dec index) index)
                            (:progress execution-state))
            :records (mapv (fn [record-set]
                             (into #{} (remove #(and (= (:statement %) statement)
-                                                    (= (:label %) label))
+                                                    (= (:tag %) tag))
                                               record-set)))
                           (without-nth (:records execution-state) index)))))
 
 (defn remove-orphan-statements
   "Given an execution state, a list  of invariant statements, and a list of
-   corresponding invariant labels, removes all statements/label pairs in the
+   corresponding invariant tags, removes all statements/tag pairs in the
    state which have no record, except for those that are invariant."
-  [execution-state invariant-statements invariant-labels]
+  [execution-state invariant-statements invariant-tags]
   (let [invariant-set (into #{} (map vector 
                                      invariant-statements
-                                     invariant-labels))]
+                                     invariant-tags))]
     (loop [state execution-state
            c 0]
-      (let [orphan-index (some (fn [[index statement label record-set]]
-                                 (when (and (empty? record-set) (not (invariant-set [statement label])))
+      (let [orphan-index (some (fn [[index statement tag record-set]]
+                                 (when (and (empty? record-set) (not (invariant-set [statement tag])))
                                    index))
                                (map vector
                                     (range)
                                     (:statements state)
-                                    (:labels state)
+                                    (:tags state)
                                     (:records state)))]
         (if orphan-index
           (recur (remove-statement state orphan-index)
@@ -119,9 +119,9 @@
 
 (defn remove-rule
   "Given an execution state, a list of invariant statements and a corresponding
-   list of invariant labels, and a rule, removes the rule and all statements
+   list of invariant tags, and a rule, removes the rule and all statements
    that relied upon that rule to be derived"
-  [execution-state invariant-statements invariant-labels rule]
+  [execution-state invariant-statements invariant-tags rule]
   (let [rule-index (some (fn [[index state-rule]]
                            (when (= rule state-rule)
                              index))
@@ -139,27 +139,27 @@
                                                                           record-set)))
                                                       (:records execution-state)))
                                 invariant-statements
-                                invariant-labels)
+                                invariant-tags)
       execution-state)))
 
 (defn find-generators
   "Given an execution state, a counter (either a goal counter or a conflict
    counter), a list of invariant statements, and a list of corresponding
-   invariant labels, returns a list of sets of generators responsible for
+   invariant tags, returns a list of sets of generators responsible for
    each set that the counter identifies."
-  [execution-state counter invariant-statements invariant-labels]
+  [execution-state counter invariant-statements invariant-tags]
   (into {}
         (mapv (fn [[index goal-set]]
                 [index
                  (apply set/union
-                        (map (fn [[statement label]]
+                        (map (fn [[statement tag]]
                                (statement-generators execution-state
                                                      statement
-                                                     label
+                                                     tag
                                                      invariant-statements
-                                                     invariant-labels))
+                                                     invariant-tags))
                              goal-set))])
-              (counter (:statements execution-state) (:labels execution-state)))))
+              (counter (:statements execution-state) (:tags execution-state)))))
 
 (defn may-remove?
   "Given a map of sets of goal generators, a map of sets of conflict
@@ -187,20 +187,20 @@
 
 (defn resolve-conflicts
   "Given an execution state, a goal counter, a conflict counter, a list of
-   invariant statements and a list of corresponding invariant labels, attempts
+   invariant statements and a list of corresponding invariant tags, attempts
    to resolve all conflicts indicated by the conflict counter by removing
    the rules that generate the conflicts. If resolving some conflict would
    require removing a set of rules that would lead to some goal becoming
    unfulfilled, then the conflict will not be resolved."
-  [execution-state goal-counter conflict-counter invariant-statements invariant-labels]
+  [execution-state goal-counter conflict-counter invariant-statements invariant-tags]
   (let [goal-generators-map (find-generators execution-state
                                              goal-counter
                                              invariant-statements
-                                             invariant-labels)
+                                             invariant-tags)
         conflict-generators-map (find-generators execution-state
                                                  conflict-counter
                                                  invariant-statements
-                                                 invariant-labels)]
+                                                 invariant-tags)]
     (first
      (reduce (fn [[state goal-generators-map] [conflict-index conflict-generators]]
                (let [minimal-conflict-generators (remove (fn [generator]
@@ -221,7 +221,7 @@
                    (let [reduced-state (reduce (fn [state rule]
                                                  (remove-rule state
                                                               invariant-statements
-                                                              invariant-labels
+                                                              invariant-tags
                                                               rule))
                                                state
                                                solution)]
@@ -229,7 +229,7 @@
                       (find-generators reduced-state
                                        goal-counter
                                        invariant-statements
-                                       invariant-labels)])
+                                       invariant-tags)])
                    [state
                     goal-generators-map])))
              [execution-state goal-generators-map]
@@ -275,19 +275,19 @@
                      conflict-generators)))))
 
 (defn execute
-  "Given an execution state, an environment, a label predicate, and a label
+  "Given an execution state, an environment, a tag predicate, and a tag
    generator, iteratively derives new statements from the existing statements
-   and rules within the execution state. Uses the label predicate to determine
+   and rules within the execution state. Uses the tag predicate to determine
    whether a statement is allowed to be used for generating new statements,
-   and the label predicate to determine the label of each new statement based
+   and the tag predicate to determine the tag of each new statement based
    on the statement of the rule from which it was derived.
    
    Optionally, takes in a number `max-steps` that limits the number of times
    that this function will attempt to derive new statements. If `max-steps`
    is not provided, execution will continue until no new statements can be
-   derived. Depending on the nature of the label predicate and generator,
+   derived. Depending on the nature of the tag predicate and generator,
    this may lead to an infinite loop."
-  [execution-state env label-predicate label-generator & [max-steps]]
+  [execution-state env tag-predicate tag-generator & [max-steps]]
   (swap! seen-rules
          (fn [x]
            []))
@@ -296,7 +296,7 @@
     (if (<= steps 0)
       state
       (let [statements (:statements state)
-            labels (:labels state)
+            tags (:tags state)
             progress (:progress state)
             cache (:computation-cache state)
             rule-index (some #(when (< (nth progress %)
@@ -307,20 +307,20 @@
           (let [new-progress (update progress rule-index inc)
                 statement-index (nth progress rule-index)
                 statement (nth statements statement-index)
-                label (nth (:labels state) statement-index)]
+                tag (nth (:tags state) statement-index)]
             (recur (dec steps)
-                   (if (label-predicate label)
+                   (if (tag-predicate tag)
                      (let [rule (nth (:rules state) rule-index)
                            cached-result (get cache [rule statement])
                            result (or cached-result ((lang/eval-tree rule env) statement))
-                           result-label (label-generator label)
+                           result-tag (tag-generator tag)
                            result-index (some #(when (and (= (nth statements %) result)
-                                                          (= (nth labels %) result-label))
+                                                          (= (nth tags %) result-tag))
                                                  %)
                                               (range (count statements)))
                            new-record {:rule rule
                                        :statement statement
-                                       :label label}]
+                                       :tag tag}]
                        (if result-index
                          (assoc state
                                 :progress new-progress
@@ -332,7 +332,7 @@
                          (let [new-state (assoc state
                                                 :progress new-progress
                                                 :statements (conj statements result)
-                                                :labels (conj labels result-label)
+                                                :tags (conj tags result-tag)
                                                 :records (conj (:records state)
                                                                #{new-record}))]
                            (if cached-result
@@ -347,9 +347,9 @@
 
 (defn evolve
   "Given a list of invariant statement, a list of corresponding invariant
-   labels, an environment, a distribution, a label predicate, a label
+   tags, an environment, a distribution, a tag predicate, a tag
    generator function, a goal counter, a conflict counter, and a number of
-   steps, attempts to evolve a set of rules that generate statement/label pairs
+   steps, attempts to evolve a set of rules that generate statement/tag pairs
    that statisfy the goals without causing any conflicts, as measured by the
    goal counter and conflict counter. It will do so by randomly generating
    rules using `dist, such that each rule consists of a program tree built form
@@ -360,8 +360,8 @@
    `invariant-statements` should be a list of statements that will always be
    present in the execution state regardless of what rules exist. For
    classification problems, these statements should consist of the data values
-   that you are attempting to classify. `invariant-labels` should be a list of
-   the same size containing a label for each invariant statement.
+   that you are attempting to classify. `invariant-tags` should be a list of
+   the same size containing a tag for each invariant statement.
    
    `env`, the environment, should be a map which maps function names to
    functions. The functions within this map are the operations which may be
@@ -374,22 +374,22 @@
    that function. If any of the elements is instead :SUBTREE, that indicates
    that that element should be replaced with a subtree.
    
-   `label-predicate` is a function that takes in a label and returns true or
-   false. When true is returned for a label, that indicates that the
+   `tag-predicate` is a function that takes in a tag and returns true or
+   false. When true is returned for a tag, that indicates that the
    corresponding statement may be used to generate further statements. The
-   label assigned to new statements is given by applying `label-generator`,
-   which should be a function that takes in a single label and returns a new
-   label, to the statement used to derive the new statement.
+   tag assigned to new statements is given by applying `tag-generator`,
+   which should be a function that takes in a single tag and returns a new
+   tag, to the statement used to derive the new statement.
    
    `goal-counter` should be a function that takes in a list of statements
-   and a list of corresponding labels, and returns a map. The map should map
+   and a list of corresponding tags, and returns a map. The map should map
    from integers, representing indeces for individual training values, to
-   sets of statement/label pairs that correctly classify the training value.
+   sets of statement/tag pairs that correctly classify the training value.
    
    `conflict-counter` should be a function that takes in a list of statements
-   and a list of corresponding labels, and returns a map. The map should map
+   and a list of corresponding tags, and returns a map. The map should map
    from integers, representing indeces for individual training values, to
-   sets of statement/label pairs that incorrectly classify the training value.
+   sets of statement/tag pairs that incorrectly classify the training value.
    
    The evolution takes place over a number of steps, as specified by the
    `steps` input. On each step, a new rule will be generated, and the function
@@ -430,7 +430,7 @@
    
    `print-status-delay` is the number of steps to delay before printing out
    each status update. If this number is 0 or less, no updates will be printed."
-  [invariant-statements invariant-labels env dist label-predicate label-generator goal-counter conflict-counter steps & [rule-cap statement-cap max-depth new-prob crossover-prob evaluator print-status-delay]]
+  [invariant-statements invariant-tags env dist tag-predicate tag-generator goal-counter conflict-counter steps & [rule-cap statement-cap max-depth new-prob crossover-prob evaluator print-status-delay]]
   (let [max-depth (or max-depth 4)
         new-prob (or new-prob 0.05)
         crossover-prob (or crossover-prob 0.7)
@@ -439,7 +439,7 @@
     (loop [current-step 0
            state {:rules []
                   :statements (vec invariant-statements)
-                  :labels (vec invariant-labels)
+                  :tags (vec invariant-tags)
                   :records (mapv (fn [x] #{}) invariant-statements)
                   :progress []
                   :computation-cache {}}
@@ -461,14 +461,14 @@
                                    :progress (conj (:progress state) 0))
               progressed-state (execute mutated-state
                                         env
-                                        label-predicate
-                                        label-generator
+                                        tag-predicate
+                                        tag-generator
                                         ##Inf)
               resolved-state (resolve-conflicts progressed-state
                                                 goal-counter
                                                 conflict-counter
                                                 invariant-statements
-                                                invariant-labels)
+                                                invariant-tags)
               final-state (loop [current-state resolved-state]
                             (if (and (<= (count (:rules current-state)) rule-cap)
                                      (<= (count (:statements current-state)) statement-cap))
@@ -476,11 +476,11 @@
                               (let [goal-generators-map (find-generators current-state
                                                                          goal-counter
                                                                          invariant-statements
-                                                                         invariant-labels)
+                                                                         invariant-tags)
                                     conflict-generators-map (find-generators current-state
                                                                              conflict-counter
                                                                              invariant-statements
-                                                                             invariant-labels)
+                                                                             invariant-tags)
                                     removable-rule (some (fn [rule]
                                                            (when (may-remove? goal-generators-map
                                                                               conflict-generators-map
@@ -490,13 +490,13 @@
                                 (if removable-rule
                                   (recur (remove-rule current-state
                                                       invariant-statements
-                                                      invariant-labels
+                                                      invariant-tags
                                                       removable-rule))
                                   current-state))))
               goal-generators (find-generators final-state
                                                goal-counter
                                                invariant-statements
-                                               invariant-labels)
+                                               invariant-tags)
               contributing-rules (vec (apply set/union
                                              (apply set/union
                                                     (vals goal-generators))))]
@@ -512,7 +512,7 @@
                           (count (:statements final-state))
                           " ("
                           (count (conflict-counter (:statements final-state)
-                                                   (:labels final-state)))
+                                                   (:tags final-state)))
                           "), Goals achieved - "
                           (count goal-generators)))
 

@@ -176,16 +176,16 @@
 
 (defn goal-counter
   "A goal counter for the iris problem. Returns a list of up to 150 sets
-   containing statement/label pairs which properly classify some data value."
-  [statements labels]
-  (let [pairs (map vector statements labels)]
+   containing statement/tag pairs which properly classify some data value."
+  [statements tags]
+  (let [pairs (map vector statements tags)]
     (into {}
           (filter #(not (empty? (second %)))
                   (map (fn [index data-label]
                          [index
-                          (into #{} (filter (fn [[statement label]]
+                          (into #{} (filter (fn [[statement tag]]
                                               (and (= (count statement) 1)
-                                                   (== index (:index label))
+                                                   (== index (:index tag))
                                                    (== (first statement) data-label)))
                                             pairs))])
                        (range)
@@ -193,16 +193,16 @@
 
 (defn conflict-counter
   "A goal counter for the iris problem. Returns a list of up to 150 sets
-   containing statement/label pairs which properly classify some data value."
-  [statements labels]
-  (let [pairs (map vector statements labels)]
+   containing statement/tag pairs which properly classify some data value."
+  [statements tags]
+  (let [pairs (map vector statements tags)]
     (into {}
           (filter #(not (empty? (second %)))
                   (map (fn [index data-label]
                          [index
-                          (into #{} (filter (fn [[statement label]]
+                          (into #{} (filter (fn [[statement tag]]
                                               (and (= (count statement) 1)
-                                                   (== index (:index label))
+                                                   (== index (:index tag))
                                                    (#{0 1 2 0.0 1.0 2.0} (first statement))
                                                    (not (== (first statement) data-label))))
                                             pairs))])
@@ -210,32 +210,32 @@
                        data-labels)))))
 
 (defn conflict-predicate
-  "Conflict predicate for the iris problem. Returns true when a statement/label
+  "Conflict predicate for the iris problem. Returns true when a statement/tag
    pair properly classifies some data value."
-  [statement label]
+  [statement tag]
   (and (= (count statement) 1)
        (#{0 1 2 0.0 1.0 2.0} (first statement))
-       (not (== (first statement) (nth data-labels (:index label))))))
+       (not (== (first statement) (nth data-labels (:index tag))))))
 
 (defn evaluate
   "A function that is executed after each evolutionary step. Computes and
    prints the current 'score' of the state, where the 'score' is defined
    as the number of data values such that there is at least one
-   statement/label pair that correctly classifies it, and no statement/label
+   statement/tag pair that correctly classifies it, and no statement/tag
    pairs that incorrectly classify it."
   [execution-state]
   (let [statements (:statements execution-state)
-        labels (:labels execution-state)
+        tags (:tags execution-state)
         result (filter (fn [index]
                          (let [data-label (nth data-labels index)
-                               matches (filter (fn [[statement label]]
+                               matches (filter (fn [[statement tag]]
                                                  (and (= (count statement) 1)
                                                       (#{0 1 2 0.0 1.0 2.0} (first statement))
-                                                      (= index (:index label))))
+                                                      (= index (:index tag))))
                                                (map vector
                                                     statements
-                                                    labels))
-                               matches-correct? (map (fn [[statement label]]
+                                                    tags))
+                               matches-correct? (map (fn [[statement tag]]
                                                        (== (first statement) data-label))
                                                      matches)]
                            (reduce #(and %1 %2)
@@ -245,19 +245,19 @@
         result-count (count result)]
     (println (str "Score: " result-count))))
 
-(defn label-predicate
-  "Label predicate for the iris problem. Returns true if and only if the 'life'
-   a label is greater than 0."
-  [label]
-  (> (:life label)
+(defn tag-predicate
+  "Tag predicate for the iris problem. Returns true if and only if the 'life'
+   a tag is greater than 0."
+  [tag]
+  (> (:life tag)
      0))
 
-(defn label-generator
-  "Label generator for the iris problem. Returns a label with the same index
+(defn tag-generator
+  "Tag generator for the iris problem. Returns a tag with the same index
    as the input, but 1 less 'life'."
-  [label]
-  (assoc label
-         :life (dec (:life label))))
+  [tag]
+  (assoc tag
+         :life (dec (:life tag))))
 
 (defn invariant-statements
   "Returns a set of invariant statements for the iris problem. When no argument
@@ -269,17 +269,17 @@
   (let [num (or num (count data-values))]
     (vec (take num data-values))))
 
-(defn invariant-labels
-  "Returns a set of invariant labels for the Iris problem. When no argument is
-   provided returns a list of 150 labels, but when a number `num` is provided
-   as an argument it will return `num` labels rather than 150. Each label
+(defn invariant-tags
+  "Returns a set of invariant tags for the Iris problem. When no argument is
+   provided returns a list of 150 tags, but when a number `num` is provided
+   as an argument it will return `num` tags rather than 150. Each tag
    consists of a map with two values: :life and :index. :index describes which
-   in the dataset this statement/label pair refers to, and is inherited to all
+   in the dataset this statement/tag pair refers to, and is inherited to all
    statements derived from this one. :life is used to limit the number of
-   deductive steps that can be taken from this statement/label pair. Whenever
-   a new statement/label pair is derived from this one it will have 1 less
-   'life', and a statement/label pair with 0 'life' cannot be used to derive
-   any further statement/label pairs." 
+   deductive steps that can be taken from this statement/tag pair. Whenever
+   a new statement/tag pair is derived from this one it will have 1 less
+   'life', and a statement/tag pair with 0 'life' cannot be used to derive
+   any further statement/tag pairs." 
   [& [num]]
   (mapv (fn [index]
           {:life 3 :index index})
@@ -289,18 +289,18 @@
   "Attempts to evolve a set of rules over for solving the iris problem.
    Evolution takes place of `steps` steps. If `data-points` is specified,
    this process will attempt to classify only the first `data-points` data
-   values, rather than all 150. `statement-cap` and `label-cap` can be used
-   to place an upper limit on the number of statements and labels,
+   values, rather than all 150. `statement-cap` and `rule-cap` can be used
+   to place an upper limit on the number of statements and rules,
    respectively, that the evolutionary process will keep after each step.
    Setting these caps can help the evolutionary process run faster by preveting
    it from accumulating too many unnecessary rules."
   [steps & [data-points rule-cap statement-cap output-interval]]
   (let [result (evo/evolve (invariant-statements data-points)
-                           (invariant-labels data-points)
+                           (invariant-tags data-points)
                            env
                            dist
-                           label-predicate
-                           label-generator
+                           tag-predicate
+                           tag-generator
                            goal-counter
                            conflict-counter
                            steps

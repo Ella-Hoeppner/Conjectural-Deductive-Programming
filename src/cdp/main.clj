@@ -209,14 +209,6 @@
                        (range)
                        data-labels)))))
 
-(defn conflict-predicate
-  "Conflict predicate for the iris problem. Returns true when a statement/tag
-   pair properly classifies some data value."
-  [statement tag]
-  (and (= (count statement) 1)
-       (#{0 1 2 0.0 1.0 2.0} (first statement))
-       (not (== (first statement) (nth data-labels (:index tag))))))
-
 (defn evaluate
   "A function that is executed after each evolutionary step. Computes and
    prints the current 'score' of the state, where the 'score' is defined
@@ -226,24 +218,11 @@
   [execution-state]
   (let [statements (:statements execution-state)
         tags (:tags execution-state)
-        result (filter (fn [index]
-                         (let [data-label (nth data-labels index)
-                               matches (filter (fn [[statement tag]]
-                                                 (and (= (count statement) 1)
-                                                      (#{0 1 2 0.0 1.0 2.0} (first statement))
-                                                      (= index (:index tag))))
-                                               (map vector
-                                                    statements
-                                                    tags))
-                               matches-correct? (map (fn [[statement tag]]
-                                                       (== (first statement) data-label))
-                                                     matches)]
-                           (reduce #(and %1 %2)
-                                   (not (empty? matches))
-                                   matches-correct?)))
-                       (range (count data-labels)))
-        result-count (count result)]
-    (println (str "Score: " result-count))))
+        goals (goal-counter statements tags)
+        conflicts (conflict-counter statements tags)]
+    (println (str "Score: "
+                  (count (set/difference (into #{} (keys goals))
+                                         (into #{} (keys conflicts))))))))
 
 (defn tag-predicate
   "Tag predicate for the iris problem. Returns true if and only if the 'life'

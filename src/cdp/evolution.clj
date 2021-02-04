@@ -484,7 +484,12 @@
                                                invariant-tags)
               contributing-rules (vec (apply set/union
                                              (apply set/union
-                                                    (vals goal-generators))))]
+                                                    (vals goal-generators))))
+              score (count (set/difference (into #{} (keys goal-generators))
+                                           (into #{} (keys (find-generators final-state
+                                                                            conflict-counter
+                                                                            invariant-statements
+                                                                            invariant-tags)))))]
           (when (and (> print-status-delay 0)
                      (= (mod current-step print-status-delay) 0))
             (println (str "\nStep "
@@ -501,12 +506,10 @@
                           "), Goals achieved - "
                           (count goal-generators)
                           "\nScore: "
-                          (count (set/difference (into #{} (keys goal-generators))
-                                                 (into #{} (keys (find-generators final-state
-                                                                                  conflict-counter
-                                                                                  invariant-statements
-                                                                                  invariant-tags))))))))
-          (recur (inc current-step)
+                          score)))
+          (recur (if (>= score (count invariant-statements))
+                   steps
+                   (inc current-step))
                  final-state
                  contributing-rules))
         (do
@@ -516,5 +519,13 @@
                      (count (:rules state))
                      "rules and"
                      (count (:statements state))
-                     "statements"))
+                     "statements\nFinal score was "
+                     (count (set/difference (into #{} (keys (find-generators state
+                                                                             goal-counter
+                                                                             invariant-statements
+                                                                             invariant-tags)))
+                                            (into #{} (keys (find-generators state
+                                                                             conflict-counter
+                                                                             invariant-statements
+                                                                             invariant-tags)))))))
           state)))))

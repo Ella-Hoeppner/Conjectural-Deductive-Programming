@@ -289,8 +289,7 @@
    this may lead to an infinite loop."
   [execution-state env tag-predicate tag-generator & [max-steps]]
   (swap! seen-rules
-         (fn [x]
-           []))
+         (constantly []))
   (loop [steps (or max-steps ##Inf)
          state execution-state]
     (if (<= steps 0)
@@ -298,7 +297,6 @@
       (let [statements (:statements state)
             tags (:tags state)
             progress (:progress state)
-            cache (:computation-cache state)
             rule-index (some #(when (< (nth progress %)
                                        (count statements))
                                 %)
@@ -311,8 +309,7 @@
             (recur (dec steps)
                    (if (tag-predicate tag)
                      (let [rule (nth (:rules state) rule-index)
-                           cached-result (get cache [rule statement])
-                           result (or cached-result ((lang/eval-tree rule env) statement))
+                           result ((lang/eval-tree rule env) statement)
                            result-tag (tag-generator tag)
                            result-index (some #(when (and (= (nth statements %) result)
                                                           (= (nth tags %) result-tag))
@@ -329,18 +326,12 @@
                                                   result-index
                                                   (conj (nth records result-index)
                                                         new-record))))
-                         (let [new-state (assoc state
-                                                :progress new-progress
-                                                :statements (conj statements result)
-                                                :tags (conj tags result-tag)
-                                                :records (conj (:records state)
-                                                               #{new-record}))]
-                           (if cached-result
-                             new-state
-                             (assoc new-state
-                                    :computation-cache (assoc cache
-                                                              [rule statement]
-                                                              result))))))
+                         (assoc state
+                                :progress new-progress
+                                :statements (conj statements result)
+                                :tags (conj tags result-tag)
+                                :records (conj (:records state)
+                                               #{new-record}))))
                      (assoc state
                             :progress new-progress))))
           state)))))
@@ -440,9 +431,8 @@
            state {:rules []
                   :statements (vec invariant-statements)
                   :tags (vec invariant-tags)
-                  :records (mapv (fn [x] #{}) invariant-statements)
-                  :progress []
-                  :computation-cache {}}
+                  :records (mapv (constantly #{}) invariant-statements)
+                  :progress []}
            important-rules []]
       (if (< current-step steps)
         (let [mutant-rule (some (fn [new-rule]

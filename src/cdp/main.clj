@@ -209,21 +209,6 @@
                        (range)
                        data-labels)))))
 
-(defn evaluate
-  "A function that is executed after each evolutionary step. Computes and
-   prints the current 'score' of the state, where the 'score' is defined
-   as the number of data values such that there is at least one
-   statement/tag pair that correctly classifies it, and no statement/tag
-   pairs that incorrectly classify it."
-  [execution-state]
-  (let [statements (:statements execution-state)
-        tags (:tags execution-state)
-        goals (goal-counter statements tags)
-        conflicts (conflict-counter statements tags)]
-    (println (str "Score: "
-                  (count (set/difference (into #{} (keys goals))
-                                         (into #{} (keys conflicts))))))))
-
 (defn tag-predicate
   "Tag predicate for the iris problem. Returns true if and only if the 'life'
    a tag is greater than 0."
@@ -288,7 +273,4 @@
                            3
                            0.25
                            0.5
-                           evaluate
-                           (or output-interval 25))]
-    (println (str "\nFinal evaluation:"))
-    (evaluate result)))
+                           (or output-interval 25))]))

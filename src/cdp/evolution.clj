@@ -414,14 +414,9 @@
    used, point mutation is used instead, so the probability of point mutation
    being used is complementary to this probability. Defaults to 0.7.
    
-   Optionally, you can pass an `evaluator` function, which should expect an 
-   execution state as an input. After each step `evaluator` will be executed
-   with the current state as an input. This can be used to print custom
-   output at each step, or keep track of the state at each step, etc.
-   
    `print-status-delay` is the number of steps to delay before printing out
    each status update. If this number is 0 or less, no updates will be printed."
-  [invariant-statements invariant-tags env dist tag-predicate tag-generator goal-counter conflict-counter steps & [rule-cap statement-cap max-depth new-prob crossover-prob evaluator print-status-delay]]
+  [invariant-statements invariant-tags env dist tag-predicate tag-generator goal-counter conflict-counter steps & [rule-cap statement-cap max-depth new-prob crossover-prob print-status-delay]]
   (let [max-depth (or max-depth 4)
         new-prob (or new-prob 0.05)
         crossover-prob (or crossover-prob 0.7)
@@ -504,9 +499,13 @@
                           (count (conflict-counter (:statements final-state)
                                                    (:tags final-state)))
                           "), Goals achieved - "
-                          (count goal-generators)))
-
-            (when evaluator (evaluator final-state)))
+                          (count goal-generators)
+                          "\nScore: "
+                          (count (set/difference (into #{} (keys goal-generators))
+                                                 (into #{} (keys (find-generators final-state
+                                                                                  conflict-counter
+                                                                                  invariant-statements
+                                                                                  invariant-tags))))))))
           (recur (inc current-step)
                  final-state
                  contributing-rules))
